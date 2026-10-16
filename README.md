@@ -233,6 +233,8 @@ pre-commit install
 pre-commit run --all-files
 ```
 
+> `make` is optional convenience only (`winget install ezwinports.make` or `scoop install make` on Windows, `brew install make` on macOS). Every target maps 1:1 to a plain command, so you can always run `pip install -r requirements-dev.txt`, `ruff check .`, and `pytest -q` directly.
+
 CI (GitHub Actions) runs ruff, `ruff format --check`, and the full test suite with coverage on Python 3.10 and 3.12 for every push and pull request.
 
 ---
