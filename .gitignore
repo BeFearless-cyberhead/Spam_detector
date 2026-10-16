@@ -1,0 +1,44 @@
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# --- Virtual environments --------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# --- Tooling caches --------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Downloadable data -----------------------------------------------------
+# Regenerate with: python download_data.py
+data/*
+
+# --- Model artifacts -------------------------------------------------------
+# Committed on purpose so a fresh clone can run the demo instantly.
+# Everything else under models/ is considered disposable build output.
+models/*
+!models/metrics.json
+!models/spam_model.joblib
+
+# --- Secrets and local config ---------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- Editors and OS -------------------------------------------------------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

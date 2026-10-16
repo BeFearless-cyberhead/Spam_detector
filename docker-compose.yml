@@ -1,0 +1,34 @@
+# Build once, run twice: the API and the Streamlit UI share one image.
+#   docker compose up --build
+#   API -> http://localhost:8000/docs   UI -> http://localhost:8501
+
+services:
+  api:
+    build:
+      context: .
+    image: spam-detector:latest
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      SPAM_MODEL_PATH: /app/models/spam_model.joblib
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+    image: spam-detector:latest
+    command:
+      - streamlit
+      - run
+      - app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+    ports:
+      - "${UI_PORT:-8501}:8501"
+    depends_on:
+      - api
+    restart: unless-stopped
+    # The image healthcheck probes the API port, which this container does not serve.
+    healthcheck:
+      disable: true

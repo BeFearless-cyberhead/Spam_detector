@@ -1,0 +1,57 @@
+{
+  "training_messages": 4128,
+  "test_messages": 1032,
+  "classification_report": {
+    "ham": {
+      "precision": 0.9911012235817576,
+      "recall": 0.9856194690265486,
+      "f1-score": 0.9883527454242929,
+      "support": 904.0
+    },
+    "spam": {
+      "precision": 0.9022556390977443,
+      "recall": 0.9375,
+      "f1-score": 0.9195402298850575,
+      "support": 128.0
+    },
+    "accuracy": 0.9796511627906976,
+    "macro avg": {
+      "precision": 0.9466784313397509,
+      "recall": 0.9615597345132743,
+      "f1-score": 0.9539464876546752,
+      "support": 1032.0
+    },
+    "weighted avg": {
+      "precision": 0.9800816162038956,
+      "recall": 0.9796511627906976,
+      "f1-score": 0.9798178597760155,
+      "support": 1032.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      891,
+      13
+    ],
+    [
+      8,
+      120
+    ]
+  ],
+  "confusion_matrix_label_order": [
+    "ham",
+    "spam"
+  ],
+  "confusion_matrix_axes": {
+    "rows": "actual",
+    "columns": "predicted"
+  },
+  "training": {
+    "dataset": "SMSSpamCollection",
+    "dataset_rows": 5160,
+    "dataset_sha256": "7d039a24a6083ed9ef0f806ebad56bbb976e3aeb8de05669173bfdc4996c239d",
+    "trained_at_utc": "2026-10-16T19:43:59+00:00",
+    "python_version": "3.10.11",
+    "scikit_learn_version": "1.7.2"
+  }
+}

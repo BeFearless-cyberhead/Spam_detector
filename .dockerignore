@@ -1,0 +1,26 @@
+.git
+.gitignore
+.gitattributes
+.github
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+htmlcov
+.coverage
+coverage.xml
+
+# The raw dataset is ~450 KB and re-downloadable; keep the image lean.
+data
+
+# Keep tests and docs out of the runtime image.
+tests
+docs
+samples
+
+Dockerfile
+docker-compose.yml
+Makefile
