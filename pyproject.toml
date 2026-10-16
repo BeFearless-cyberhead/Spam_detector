@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spam-detector"
-version = "1.0.0"
+dynamic = ["version"]
 description = "SMS spam detection with a scikit-learn TF-IDF pipeline, a Streamlit UI, and a FastAPI service."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -60,15 +60,22 @@ all = [
   "pre-commit>=3,<5",
 ]
 
-[project.urls]
-Homepage = "https://github.com/BeFearless-cyberhead/spam-detector"
-Source = "https://github.com/BeFearless-cyberhead/spam-detector"
-Issues = "https://github.com/BeFearless-cyberhead/spam-detector/issues"
+[project.scripts]
+spam-detector-api = "spam_detector.api:serve"
+spam-detector-data = "spam_detector.data:main"
+spam-detector-train = "spam_detector.train:main"
+spam-detector-ui = "spam_detector.cli:ui"
 
-[tool.setuptools]
-# Flat, script-style layout: no importable package, just top-level modules.
-packages = []
-py-modules = ["api", "app", "download_data", "spam_model", "train"]
+[project.urls]
+Homepage = "https://github.com/BeFearless-cyberhead/Spam_detector"
+Source = "https://github.com/BeFearless-cyberhead/Spam_detector"
+Issues = "https://github.com/BeFearless-cyberhead/Spam_detector/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "spam_detector.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 # ---------------------------------------------------------------------------
 # pytest
@@ -76,6 +83,8 @@ py-modules = ["api", "app", "download_data", "spam_model", "train"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+# Lets `pytest` run from a fresh clone without installing the package.
+pythonpath = ["src"]
 addopts = "-ra --strict-config --strict-markers"
 
 # ---------------------------------------------------------------------------
@@ -83,7 +92,12 @@ addopts = "-ra --strict-config --strict-markers"
 # ---------------------------------------------------------------------------
 [tool.coverage.run]
 branch = true
-source = ["api", "app", "spam_model", "train"]
+source = ["spam_detector"]
+# The Streamlit entry point is compiled and exec'd by Streamlit's own script
+# loader, so coverage.py cannot attribute line data to it (a direct main() call
+# records fine). The UI layer is instead verified behaviourally by the
+# AppTest-based tests in tests/test_app.py.
+omit = ["src/spam_detector/app.py"]
 
 [tool.coverage.report]
 show_missing = true
@@ -91,7 +105,9 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
+  "pragma: no cover",
 ]
+fail_under = 90
 
 # ---------------------------------------------------------------------------
 # ruff
@@ -127,4 +143,4 @@ convention = "google"
 "tests/*" = ["D100", "D101", "D103", "S101"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["api", "app", "download_data", "spam_model", "train"]
+known-first-party = ["spam_detector"]

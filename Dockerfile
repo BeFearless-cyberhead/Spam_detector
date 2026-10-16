@@ -9,10 +9,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Dependencies first so code edits reuse the cached layer.
+# Dependencies first so application edits reuse the cached layer.
 COPY requirements.txt ./
 RUN python -m pip install --upgrade pip && \
     python -m pip install -r requirements.txt
+
+# Install the project itself (editable keeps config paths pointing at /app).
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN python -m pip install --no-deps --editable .
 
 COPY . .
 
@@ -28,4 +33,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"
 
 # Default process: the REST API. `docker compose` overrides this for the UI.
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "spam_detector.api:app", "--host", "0.0.0.0", "--port", "8000"]

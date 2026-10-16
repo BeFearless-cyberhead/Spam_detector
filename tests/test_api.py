@@ -1,40 +1,14 @@
 import json
 
-import joblib
 import pytest
 from fastapi.testclient import TestClient
 
-from api import create_app
-from spam_model import build_model
-
-TRAIN_MESSAGES = [
-    "Team meeting tomorrow morning",
-    "Please call me after class",
-    "Dinner is ready at home",
-    "Can you send the homework notes",
-    "Win free cash prize claim now",
-    "Congratulations claim your free prize",
-    "Urgent winner cash reward claim now",
-    "Free bonus cash prize click now",
-]
-
-TRAIN_LABELS = [0, 0, 0, 0, 1, 1, 1, 1]
-
-
-@pytest.fixture
-def model_path(tmp_path):
-    """Write a small fitted model to a temporary directory."""
-    model = build_model()
-    model.fit(TRAIN_MESSAGES, TRAIN_LABELS)
-
-    path = tmp_path / "spam_model.joblib"
-    joblib.dump(model, path)
-    return path
+from spam_detector.api import create_app
 
 
 @pytest.fixture
 def client(model_path):
-    """A TestClient wired to the temporary model."""
+    """A TestClient wired to the tiny fitted model."""
     with TestClient(create_app(model_path)) as test_client:
         yield test_client
 
@@ -108,7 +82,7 @@ def test_predict_returns_503_without_artifact(tmp_path):
         response = test_client.post("/predict", json={"message": "hello"})
 
     assert response.status_code == 503
-    assert "train.py" in response.json()["detail"]
+    assert "spam_detector.train" in response.json()["detail"]
 
 
 def test_model_info_without_metrics(model_path):
@@ -150,3 +124,14 @@ def test_openapi_schema_is_served(client):
 
     assert schema["info"]["title"] == "SMS Spam Detector API"
     assert "/predict" in schema["paths"]
+
+
+def test_resolve_model_path_prefers_the_explicit_override(tmp_path, monkeypatch):
+    from spam_detector.api import resolve_model_path
+
+    monkeypatch.setenv("SPAM_MODEL_PATH", str(tmp_path / "from-env.joblib"))
+
+    assert resolve_model_path(tmp_path / "explicit.joblib") == (
+        tmp_path / "explicit.joblib"
+    )
+    assert resolve_model_path() == tmp_path / "from-env.joblib"

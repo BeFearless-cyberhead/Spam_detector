@@ -22,7 +22,7 @@ coverage.xml
 htmlcov/
 
 # --- Downloadable data -----------------------------------------------------
-# Regenerate with: python download_data.py
+# Regenerate with: python -m spam_detector.data
 data/*
 
 # --- Model artifacts -------------------------------------------------------

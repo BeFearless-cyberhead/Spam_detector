@@ -1,33 +1,13 @@
 import joblib
 import pytest
 
-from spam_model import (
+from spam_detector.model import (
     build_model,
     load_model,
     predict_spam,
     predict_spam_probability,
     validate_message,
 )
-
-
-@pytest.fixture
-def fitted_model():
-    messages = [
-        "Team meeting tomorrow morning",
-        "Please call me after class",
-        "Dinner is ready at home",
-        "Can you send the homework notes",
-        "Win free cash prize claim now",
-        "Congratulations claim your free prize",
-        "Urgent winner cash reward claim now",
-        "Free bonus cash prize click now",
-    ]
-
-    labels = [0, 0, 0, 0, 1, 1, 1, 1]
-
-    model = build_model()
-    model.fit(messages, labels)
-    return model
 
 
 @pytest.mark.parametrize("message", ["", " ", "\n\t"])

@@ -1,21 +1,19 @@
 """End-to-end tests for the Streamlit UI using Streamlit's AppTest harness.
 
-These render ``app.py`` in-process (no browser required) and assert on the
+These render the app in-process (no browser required) and assert on the
 resulting widget tree. They need the committed demo artifact, so they are
-skipped if ``models/spam_model.joblib`` has been deleted.
+skipped when ``models/spam_model.joblib`` has been deleted.
 """
-
-from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
-APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
-MODEL_PATH = APP_PATH.parent / "models" / "spam_model.joblib"
+from spam_detector import config
+from spam_detector.cli import APP_PATH
 
 pytestmark = pytest.mark.skipif(
-    not MODEL_PATH.exists(),
-    reason="models/spam_model.joblib is missing; run `python train.py` first",
+    not config.model_path().exists(),
+    reason="models/spam_model.joblib is missing; run `spam-detector-train` first",
 )
 
 SPAM_MESSAGE = "WINNER! You have been selected for a free cash prize, claim now!"

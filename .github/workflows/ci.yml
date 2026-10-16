@@ -34,6 +34,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
+          python -m pip install --no-deps --editable .
+
+      - name: Smoke-test the installed package
+        run: |
+          python -c "import spam_detector; print('version', spam_detector.__version__)"
+          spam-detector-train --help
+          spam-detector-data --help
 
       - name: Lint (ruff)
         run: ruff check .
@@ -43,6 +50,12 @@ jobs:
 
       - name: Run tests with coverage
         run: pytest -q --cov --cov-report=term-missing
+
+      - name: Train end to end on the bundled sample dataset
+        run: |
+          spam-detector-train --data samples/sample_messages.tsv --model-dir /tmp/ci-model
+          test -f /tmp/ci-model/spam_model.joblib
+          test -f /tmp/ci-model/metrics.json
 
   docker:
     name: docker image builds

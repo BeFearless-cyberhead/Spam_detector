@@ -1,6 +1,6 @@
 # Spam Detector — common tasks.
 # `make help` lists every target. Works on Linux/macOS/Git Bash and via
-# `make` on Windows (choco install make / scoop install make).
+# `make` on Windows (winget/scoop install make).
 
 PYTHON ?= python
 PORT_API ?= 8000
@@ -13,14 +13,14 @@ PORT_UI ?= 8501
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install runtime + dev dependencies
-	$(PYTHON) -m pip install -r requirements-dev.txt
+install: ## Install the package in editable mode with every extra
+	$(PYTHON) -m pip install --editable ".[all]"
 
 data: ## Download the UCI SMS Spam Collection into data/
-	$(PYTHON) download_data.py
+	$(PYTHON) -m spam_detector.data
 
 train: ## Train the model and write models/spam_model.joblib + metrics.json
-	$(PYTHON) train.py
+	$(PYTHON) -m spam_detector.train
 
 retrain: data train ## Re-download the dataset and retrain from scratch
 
@@ -43,10 +43,10 @@ fix: format ## Alias for `format`
 check: lint test ## What CI runs
 
 ui: ## Start the Streamlit demo
-	$(PYTHON) -m streamlit run app.py --server.port $(PORT_UI)
+	$(PYTHON) -m streamlit run src/spam_detector/app.py --server.port $(PORT_UI)
 
 api: ## Start the FastAPI service with autoreload
-	$(PYTHON) -m uvicorn api:app --reload --port $(PORT_API)
+	$(PYTHON) -m uvicorn spam_detector.api:app --reload --port $(PORT_API)
 
 docker: ## Build and start API + UI containers
 	docker compose up --build

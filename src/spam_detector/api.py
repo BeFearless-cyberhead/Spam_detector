@@ -2,7 +2,8 @@
 
 Run locally::
 
-    uvicorn api:app --reload --port 8000
+    python -m uvicorn spam_detector.api:app --reload --port 8000
+    # or, once the package is installed: spam-detector-api
 
 Interactive docs are then available at http://127.0.0.1:8000/docs.
 
@@ -10,6 +11,8 @@ Configuration (environment variables):
 
 * ``SPAM_MODEL_PATH`` -- path to the ``joblib`` artifact, default
   ``models/spam_model.joblib``.
+* ``API_HOST`` / ``API_PORT`` -- bind address for the ``spam-detector-api``
+  entry point.
 """
 
 from __future__ import annotations
@@ -19,21 +22,27 @@ import os
 from pathlib import Path
 from typing import Any
 
+import uvicorn
 from fastapi import FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 
-from spam_model import (
+from spam_detector.config import (
+    METRICS_FILENAME,
+)
+from spam_detector.config import (
+    model_path as default_model_path,
+)
+from spam_detector.model import (
     LABELS,
     MAX_MESSAGE_LENGTH,
-    METRICS_FILENAME,
-    MODEL_FILENAME,
     load_model,
     predict_spam,
     predict_spam_probability,
 )
 
-BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_MODEL_PATH = BASE_DIR / "models" / MODEL_FILENAME
+# Containers must bind all interfaces, hence 0.0.0.0 as the default host.
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8000
 
 
 class PredictRequest(BaseModel):
@@ -90,8 +99,7 @@ def resolve_model_path(override: str | Path | None = None) -> Path:
     if override is not None:
         return Path(override)
 
-    from_env = os.getenv("SPAM_MODEL_PATH")
-    return Path(from_env) if from_env else DEFAULT_MODEL_PATH
+    return default_model_path()
 
 
 def create_app(model_path: str | Path | None = None) -> FastAPI:
@@ -129,7 +137,7 @@ def create_app(model_path: str | Path | None = None) -> FastAPI:
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail=(
                         "Model artifact is missing. Train it with "
-                        "`python train.py` or set SPAM_MODEL_PATH."
+                        "`python -m spam_detector.train` or set SPAM_MODEL_PATH."
                     ),
                 )
 
@@ -154,7 +162,7 @@ def create_app(model_path: str | Path | None = None) -> FastAPI:
 
     @app.get("/model-info", response_model=ModelInfoResponse, tags=["ops"])
     def model_info() -> ModelInfoResponse:
-        """Return the stored evaluation metrics produced by ``train.py``."""
+        """Return the stored evaluation metrics produced by the trainer."""
         metrics_path = resolved_path.parent / METRICS_FILENAME
 
         if not metrics_path.exists():
@@ -190,7 +198,8 @@ def create_app(model_path: str | Path | None = None) -> FastAPI:
             payload: The request body containing the message.
 
         Returns:
-            The predicted label, an ``is_spam`` boolean, and the spam probability.
+            The predicted label, an ``is_spam`` boolean, and the spam
+            probability.
         """
         model = get_model()
         message = payload.message
@@ -210,6 +219,15 @@ def create_app(model_path: str | Path | None = None) -> FastAPI:
         )
 
     return app
+
+
+def serve() -> None:
+    """Run the API with uvicorn (``spam-detector-api`` console script)."""
+    uvicorn.run(
+        "spam_detector.api:app",
+        host=os.getenv("API_HOST", DEFAULT_HOST),
+        port=int(os.getenv("API_PORT", str(DEFAULT_PORT))),
+    )
 
 
 app = create_app()

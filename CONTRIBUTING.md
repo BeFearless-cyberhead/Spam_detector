@@ -9,17 +9,27 @@ python -m venv .venv
 .venv\Scripts\activate          # Windows
 # source .venv/bin/activate     # macOS / Linux
 
-pip install -r requirements-dev.txt
+pip install --editable ".[all]"   # package + every extra, in editable mode
 pre-commit install
 ```
+
+The editable install is what makes `spam-detector-*` available on your PATH and lets the Streamlit app import the package.
 
 ## Development loop
 
 ```bash
 make data train    # download the UCI dataset and retrain (skip if models/ already has the demo artifact)
 make check         # ruff + pytest, the same gate CI runs
-make ui            # streamlit run app.py
-make api           # uvicorn api:app --reload --port 8000
+make ui            # launch the Streamlit UI
+make api           # launch the API with autoreload
+```
+
+Equivalent without `make`:
+
+```bash
+python -m spam_detector.train
+python -m streamlit run src/spam_detector/app.py
+python -m uvicorn spam_detector.api:app --reload
 ```
 
 ## Quality gates
@@ -32,10 +42,30 @@ ruff format --check .
 pytest -q
 ```
 
+Coverage must stay at or above the `fail_under` threshold configured in `pyproject.toml` (90%):
+
+```bash
+pytest --cov --cov-report=term-missing
+```
+
 - Line length is 88 characters; formatting is enforced by `ruff format` (not hand-formatted).
-- Public functions, classes, and modules need Google-style docstrings (`ruff` `D` rules).
-- New behaviour needs a test. Tests must not depend on the downloaded dataset — build fixtures with `tmp_path`, or use the committed `samples/sample_messages.tsv`. Tests that need the trained artifact are skipped when `models/spam_model.joblib` is absent.
-- Never edit `models/metrics.json` by hand; regenerate it with `python train.py`.
+- Public modules, functions, and classes need Google-style docstrings (`ruff` `D` rules).
+- New behaviour needs a test. Tests must not touch the network or the downloaded dataset — build fixtures with `tmp_path`, use the committed `samples/sample_messages.tsv`, or monkeypatch the download helpers as `tests/test_data.py` does. Tests that need the trained artifact are skipped when `models/spam_model.joblib` is absent.
+- Never edit `models/metrics.json` by hand; regenerate it with `spam-detector-train`.
+
+### Where does new code go?
+
+| Change | Module |
+| :--- | :--- |
+| Pipeline, validation, prediction | `src/spam_detector/model.py` |
+| Paths, file names, environment variables | `src/spam_detector/config.py` |
+| Training, splitting, metrics | `src/spam_detector/train.py` |
+| Dataset download/extraction | `src/spam_detector/data.py` |
+| HTTP interface | `src/spam_detector/api.py` |
+| Streamlit interface | `src/spam_detector/app.py` |
+| Console-script wrappers | `src/spam_detector/cli.py` |
+
+Anything new must be re-exported from `src/spam_detector/__init__.py` if it belongs to the public API.
 
 ## Adding a dependency
 
@@ -56,4 +86,4 @@ Open an issue with:
 - What you ran (exact command) and what you expected.
 - The traceback or the full JSON error response.
 - Output of `python -c "import sklearn, pandas, sys; print(sys.version, sklearn.__version__, pandas.__version__)"`.
-- Whether a retrain (`python train.py`) changes the behaviour — this distinguishes a stale artifact from a code bug.
+- Whether a retrain (`spam-detector-train`) changes the behaviour — this distinguishes a stale artifact from a code bug.

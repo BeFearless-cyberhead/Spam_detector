@@ -2,7 +2,8 @@
 
 Run locally::
 
-    streamlit run app.py
+    python -m streamlit run src/spam_detector/app.py
+    # or, once the package is installed: spam-detector-ui
 """
 
 from __future__ import annotations
@@ -12,18 +13,13 @@ from pathlib import Path
 
 import streamlit as st
 
-from spam_model import (
+from spam_detector.config import metrics_path, model_path
+from spam_detector.model import (
     MAX_MESSAGE_LENGTH,
-    METRICS_FILENAME,
-    MODEL_FILENAME,
     load_model,
     predict_spam,
     predict_spam_probability,
 )
-
-BASE_DIR = Path(__file__).resolve().parent
-MODEL_PATH = BASE_DIR / "models" / MODEL_FILENAME
-METRICS_PATH = BASE_DIR / "models" / METRICS_FILENAME
 
 
 @st.cache_resource
@@ -124,31 +120,31 @@ def main() -> None:
     st.write("Is this message spam?")
     st.caption("Yes = predicted spam · No = predicted legitimate message")
 
+    artifact = model_path()
+    metrics_file = metrics_path()
+
     metrics = None
 
-    if METRICS_PATH.exists():
-        metrics = load_metrics(str(METRICS_PATH), METRICS_PATH.stat().st_mtime_ns)
+    if metrics_file.exists():
+        metrics = load_metrics(str(metrics_file), metrics_file.stat().st_mtime_ns)
 
     if metrics:
         render_model_card(metrics)
 
-    if not MODEL_PATH.exists():
+    if not artifact.exists():
         st.warning("Train the model before using the application.")
         st.code(
-            "python download_data.py\npython train.py",
+            "python -m spam_detector.data\npython -m spam_detector.train",
             language="bash",
         )
         st.stop()
 
     try:
-        model = load_cached_model(
-            str(MODEL_PATH),
-            MODEL_PATH.stat().st_mtime_ns,
-        )
+        model = load_cached_model(str(artifact), artifact.stat().st_mtime_ns)
     except Exception:  # noqa: BLE001 - surface any load failure as a friendly UI message
         st.error(
             "The model could not be loaded. "
-            "Retrain it in this environment with: python train.py"
+            "Retrain it in this environment with: python -m spam_detector.train"
         )
         st.stop()
 

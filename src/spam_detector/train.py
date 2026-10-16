@@ -2,8 +2,8 @@
 
 Usage::
 
-    python train.py                        # full UCI dataset -> models/
-    python train.py --data samples/sample_messages.tsv --model-dir /tmp/out
+    python -m spam_detector.train          # full dataset -> models/
+    python -m spam_detector.train --help   # every option
 
 The script writes two artifacts:
 
@@ -28,11 +28,13 @@ import sklearn
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.model_selection import train_test_split
 
-from spam_model import METRICS_FILENAME, MODEL_FILENAME, build_model
-
-BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_DATA_PATH = BASE_DIR / "data" / "SMSSpamCollection"
-DEFAULT_MODEL_DIR = BASE_DIR / "models"
+from spam_detector.config import (
+    METRICS_FILENAME,
+    MODEL_FILENAME,
+    MODELS_DIR,
+    dataset_path,
+)
+from spam_detector.model import build_model
 
 #: Minimum number of unique messages required per class.
 MIN_MESSAGES_PER_CLASS = 5
@@ -59,7 +61,7 @@ def load_dataset(path: Path) -> pd.DataFrame:
     """
     if not path.exists():
         raise FileNotFoundError(
-            f"Dataset not found: {path}\nRun: python download_data.py"
+            f"Dataset not found: {path}\nDownload it with: python -m spam_detector.data"
         )
 
     records = []
@@ -190,14 +192,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--data",
         type=Path,
-        default=DEFAULT_DATA_PATH,
-        help="Path to the tab-separated dataset (default: data/SMSSpamCollection).",
+        default=dataset_path(),
+        help="Tab-separated dataset (default: data/SMSSpamCollection).",
     )
     parser.add_argument(
         "--model-dir",
         type=Path,
-        default=DEFAULT_MODEL_DIR,
-        help="Directory where the model and metrics are written (default: models/).",
+        default=MODELS_DIR,
+        help="Where the model and metrics are written (default: models/).",
     )
     parser.add_argument(
         "--test-size",

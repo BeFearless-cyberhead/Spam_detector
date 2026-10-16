@@ -16,9 +16,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
-MODEL_FILENAME = "spam_model.joblib"
-METRICS_FILENAME = "metrics.json"
-
 #: Longest message accepted for scoring. Guards the API against oversized input.
 MAX_MESSAGE_LENGTH = 10_000
 
@@ -126,7 +123,8 @@ def load_model(path: str | Path) -> Pipeline:
     """Load a persisted pipeline and check that it has the expected shape.
 
     Args:
-        path: Location of a ``joblib`` artifact written by ``train.py``.
+        path: Location of a ``joblib`` artifact written by
+            :mod:`spam_detector.train`.
 
     Returns:
         The deserialised :class:`~sklearn.pipeline.Pipeline`.

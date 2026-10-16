@@ -31,7 +31,7 @@ Following the structure proposed by Mitchell et al. (2019), *Model Cards for Mod
 
 ## Training data
 
-- **Source:** [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms+spam+collection) (CC BY 4.0), downloaded at runtime by `download_data.py`.
+- **Source:** [UCI SMS Spam Collection](https://archive.ics.uci.edu/dataset/228/sms+spam+collection) (CC BY 4.0), downloaded at runtime by `spam_detector.data`.
 - **Content:** 5,574 English SMS messages labelled `ham` (legitimate) or `spam`.
 - **Preprocessing:** blank lines dropped, duplicates removed on message text, labels mapped to `{ham: 0, spam: 1}`. Rows where the same message carries conflicting labels raise an error.
 - **Usable rows:** 5,160 unique messages (1,032 held out for testing).
@@ -83,7 +83,7 @@ Because features are bag-of-ngrams, word order and negation are largely lost ("d
 ## Ethical and safety notes
 
 - **No autonomous action.** The Streamlit UI states plainly that predictions can be wrong and that messages should not be deleted automatically.
-- **Explainability.** Logistic-regression coefficients over TF-IDF features make the model broadly interpretable, and the pipeline is fully reproducible from `train.py`.
+- **Explainability.** Logistic-regression coefficients over TF-IDF features make the model broadly interpretable, and the pipeline is fully reproducible from `spam_detector.train`.
 - **Security.** `joblib`/pickle artifacts execute code on load — only load models produced by this repository. The API caps message length at 10,000 characters and rejects non-string payloads via Pydantic.
 - **No PII storage.** The API is stateless: messages are scored in memory and never persisted or logged by this codebase.
 
@@ -93,4 +93,4 @@ Because features are bag-of-ngrams, word order and negation are largely lost ("d
 - Re-evaluate on data from the actual target channel and vintage.
 - Consider probability calibration (`CalibratedClassifierCV`) if the confidence score is shown to users or used to triage.
 - Monitor for drift in message length, link density, and out-of-vocabulary rate; a rising OOV rate is an early signal that retraining is due.
-- Update `models/metrics.json` via `python train.py` whenever the model changes; never hand-edit it.
+- Update `models/metrics.json` via `spam-detector-train` whenever the model changes; never hand-edit it.

@@ -5,8 +5,8 @@ import joblib
 import pytest
 from sklearn.pipeline import Pipeline
 
-from spam_model import build_model, predict_spam
-from train import load_dataset, main, parse_args, sha256_of
+from spam_detector.model import build_model, predict_spam
+from spam_detector.train import load_dataset, main, parse_args, sha256_of
 
 SAMPLE_PATH = Path(__file__).resolve().parent.parent / "samples" / "sample_messages.tsv"
 
@@ -46,7 +46,7 @@ def test_sample_dataset_is_reproducible_across_loads():
 
 
 def test_missing_dataset_raises_with_hint(tmp_path):
-    with pytest.raises(FileNotFoundError, match=r"download_data\.py"):
+    with pytest.raises(FileNotFoundError, match=r"spam_detector\.data"):
         load_dataset(tmp_path / "nope.tsv")
 
 
