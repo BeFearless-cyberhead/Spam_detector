@@ -37,6 +37,10 @@ models/*
 .env.*
 !.env.example
 
+# --- Local planning --------------------------------------------------------
+# Personal progress notes; not part of the published repo.
+todo.md
+
 # --- Editors and OS -------------------------------------------------------
 .idea/
 .vscode/
