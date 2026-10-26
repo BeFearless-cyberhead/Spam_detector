@@ -50,27 +50,29 @@ Stratified 80/20 hold-out split (seed 42); 4,128 train / 1,032 test messages. No
 
 | Class | Precision | Recall | F1 | Support |
 | :--- | ---: | ---: | ---: | ---: |
-| ham | 0.9911 | 0.9856 | 0.9884 | 904 |
-| spam | 0.9023 | 0.9375 | 0.9195 | 128 |
-| macro avg | 0.9467 | 0.9616 | 0.9539 | 1,032 |
-| weighted avg | 0.9801 | 0.9797 | 0.9798 | 1,032 |
-| **accuracy** | | | **0.9797** | 1,032 |
+| ham | 0.9934 | 0.9934 | 0.9934 | 904 |
+| spam | 0.9531 | 0.9531 | 0.9531 | 128 |
+| macro avg | 0.9732 | 0.9732 | 0.9732 | 1,032 |
+| weighted avg | 0.9884 | 0.9884 | 0.9884 | 1,032 |
+| **accuracy** | | | **0.9884** | 1,032 |
 
 Confusion matrix (rows = actual, columns = predicted):
 
 |  | pred. ham | pred. spam |
 | :--- | ---: | ---: |
-| **actual ham** | 891 | 13 |
-| **actual spam** | 8 | 120 |
+| **actual ham** | 898 | 6 |
+| **actual spam** | 6 | 122 |
 
-**Metric choice.** Spam **recall** (0.94) is prioritised over spam precision (0.90): a filtering product would rather occasionally flag a legitimate message than let spam through. `class_weight="balanced"` pushes the decision boundary in that direction. Precision/recall are reported instead of relying on accuracy alone, which is misleading at a 13% positive rate.
+**Metric choice.** Precision and recall are balanced at the operating threshold (0.5, calibrated); a product that weights one over the other can move the threshold per request (`SPAM_THRESHOLD` env var or the API/CLI `--threshold` option) without retraining. Probabilities are sigmoid-calibrated — Brier score **0.0099**, log loss **0.0386** — so confidence values are honest.
+
+**Training procedure.** Stratified 5-fold cross-validated search over word n-gram range, character n-grams (on), and regularisation strength `C` selected by spam F1, followed by sigmoid calibration. Length/vocabulary statistics are recorded for drift monitoring.
 
 ## Error analysis
 
 Held-out results are concentrated in two failure modes:
 
-1. **False negatives (8 messages)** — spam phrased in ordinary conversational English (no prize/urgent/free keywords), or very short messages with too little signal for unigram/bigram TF-IDF.
-2. **False positives (13 messages)** — legitimate messages that share spam vocabulary: promotions from real companies, prize/competition notices, delivery notifications with links, and messages full of numbers and capitalisation.
+1. **False negatives (6 messages)** — spam phrased in ordinary conversational English (no prize/urgent/free keywords).
+2. **False positives (6 messages)** — legitimate messages that share spam vocabulary: promotions, prize/competition notices, delivery notifications with links, and messages full of numbers and capitalisation.
 
 Because features are bag-of-ngrams, word order and negation are largely lost ("do not call this number" vs "call this number"), which is the main structural weakness.
 
@@ -85,12 +87,12 @@ Because features are bag-of-ngrams, word order and negation are largely lost ("d
 - **No autonomous action.** The Streamlit UI states plainly that predictions can be wrong and that messages should not be deleted automatically.
 - **Explainability.** Logistic-regression coefficients over TF-IDF features make the model broadly interpretable, and the pipeline is fully reproducible from `spam_detector.train`.
 - **Security.** `joblib`/pickle artifacts execute code on load — only load models produced by this repository. The API caps message length at 10,000 characters and rejects non-string payloads via Pydantic.
-- **No PII storage.** The API is stateless: messages are scored in memory and never persisted or logged by this codebase.
+- **No PII storage.** Predictions are scored in memory and never persisted; the only optional persistence is the `SPAM_FEEDBACK_LOG` JSONL supplied voluntarily via `/feedback`. The `SPAM_DRIFT_WINDOW` monitor sees message text transiently in memory only.
 
 ## Caveats and recommendations
 
 - Retrain before any real deployment; the metrics describe a 2011-era snapshot.
 - Re-evaluate on data from the actual target channel and vintage.
-- Consider probability calibration (`CalibratedClassifierCV`) if the confidence score is shown to users or used to triage.
-- Monitor for drift in message length, link density, and out-of-vocabulary rate; a rising OOV rate is an early signal that retraining is due.
+- Probabilities are calibrated with `CalibratedClassifierCV`; the `--no-calibrate` training flag restores the raw logistic regression if raw scores are preferred.
+- `/drift` and the UI sidebar flag rising OOV rate and length shift as early signals that retraining is due, but the monitor is descriptive — a flagged status means investigate, not auto-retrain.
 - Update `models/metrics.json` via `spam-detector-train` whenever the model changes; never hand-edit it.

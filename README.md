@@ -6,22 +6,24 @@ An end-to-end spam-classification project: a scikit-learn NLP pipeline packaged 
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![Ruff](https://img.shields.io/badge/lint-ruff-000000)
-![Tests](https://img.shields.io/badge/tests-80%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-176%20passing-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
 
-**Held-out accuracy: 97.97%** · **Spam recall: 93.75%** · **Spam F1: 0.92**
+**Held-out accuracy: 98.84%** · **Spam precision/recall: 95.3%** · **Brier score: 0.0099**
 
 ---
 
 ## Highlights
 
-- **A real package, not a folder of scripts** — `src/` layout, `pyproject.toml`, four console entry points, and typed public API (`from spam_detector import build_model`).
-- **Real NLP pipeline** — TF-IDF (unigrams + bigrams, sublinear TF, 30k features) feeding a class-balanced logistic-regression classifier.
+- **A real package, not a folder of scripts** — `src/` layout, `pyproject.toml`, five console entry points, and typed public API (`from spam_detector import build_model`).
+- **Real NLP pipeline** — TF-IDF (word + character n-grams, 30k features) feeding a class-balanced logistic-regression classifier, with cross-validated hyperparameter selection.
+- **Calibrated confidence** — probabilities wrapped in `CalibratedClassifierCV` (sigmoid); the Brier score and log-loss are recorded in `metrics.json`.
 - **Leak-free evaluation** — deduplicated dataset, stratified 80/20 split, and a saved `metrics.json` with confusion matrix, dataset SHA-256, and library versions for reproducibility.
 - **Defensive data layer** — the loader rejects malformed rows, contradictory duplicate labels, and degenerate class splits instead of silently training on bad data.
-- **Three interfaces, one model** — a Streamlit UI, a typed FastAPI REST service, and a CLI all import `spam_detector.model.build_model()`.
-- **Production-ish ergonomics** — shared input validation, lazy model loading, health/model-info endpoints, structured error responses (422/503), Dockerfile, docker-compose, Makefile, pre-commit hooks, and GitHub Actions CI.
-- **80 tests / 96% coverage** across validation, training, dataset extraction, the HTTP contract, and headless Streamlit renders.
+- **Explainability** — coefficient-based top tokens per prediction (`--explain` in the CLI, `explain` flag in the API, panel in the UI).
+- **Four interfaces, one model** — a Streamlit UI, a typed FastAPI REST service, and two CLIs all import `spam_detector.model.build_model()`.
+- **Operations, not just demos** — batch prediction, a `/feedback` misclassification log, drift monitoring on length and out-of-vocabulary rate, tunable decision threshold, lazy model loading, structured error responses (422/503), Dockerfile, docker-compose, Makefile, pre-commit hooks, and GitHub Actions CI.
+- **176 tests / 96% coverage** across validation, training, dataset extraction, the HTTP contract, the drift monitor, and headless Streamlit renders.
 
 ---
 
@@ -31,18 +33,18 @@ Evaluated on a stratified 20% hold-out split (1,032 messages) of the UCI SMS Spa
 
 | Class | Precision | Recall | F1 | Support |
 | :--- | ---: | ---: | ---: | ---: |
-| ham | 0.991 | 0.986 | **0.988** | 904 |
-| spam | 0.902 | 0.938 | **0.920** | 128 |
-| **accuracy** | | | **0.980** | 1,032 |
+| ham | 0.993 | 0.993 | **0.993** | 904 |
+| spam | 0.953 | 0.953 | **0.953** | 128 |
+| **accuracy** | | | **0.988** | 1,032 |
 
 Confusion matrix (rows = actual, columns = predicted):
 
 |  | pred. ham | pred. spam |
 | :--- | ---: | ---: |
-| **actual ham** | 891 | 13 |
-| **actual spam** | 8 | 120 |
+| **actual ham** | 898 | 6 |
+| **actual spam** | 6 | 122 |
 
-**How to read this:** a false positive (13 cases) means a legitimate message is flagged as spam; a false negative (8 cases) means spam slips through. Spam **recall** is the metric that matters most in a filtering product, which is exactly why the classifier uses `class_weight="balanced"` — it trades a little precision on the minority class for better coverage of spam.
+**How to read this:** a false positive (6 cases) means a legitimate message is flagged as spam; a false negative (6 cases) means spam slips through. Spam **recall** is the metric that matters most in a filtering product, which is exactly why the classifier uses `class_weight="balanced"` — it trades a little precision on the minority class for better coverage of spam. Probabilities are sigmoid-calibrated (Brier score **0.0099**, log loss 0.0386), so the confidence numbers shown in the UI/API are honest.
 
 Full metrics, dataset fingerprint, and training metadata: [`models/metrics.json`](models/metrics.json) · model card: [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md)
 
@@ -64,7 +66,7 @@ flowchart LR
     G --> I
 ```
 
-**Inference path:** raw text → `validate_message()` (type, emptiness, 10k-char cap) → TF-IDF vector → logistic regression → `predict` (hard label) and `predict_proba` (spam confidence).
+**Inference path:** raw text → `validate_message()` (type, emptiness, 10k-char cap) → TF-IDF vector → logistic regression → sigmoid calibration → `predict_proba` (spam probability) → `threshold` decision (default 0.5, configurable).
 
 ---
 
@@ -73,7 +75,7 @@ flowchart LR
 | Layer | Tools |
 | :--- | :--- |
 | Language | Python 3.10+ (tested on 3.10 / 3.11 / 3.12) |
-| ML / NLP | scikit-learn (`TfidfVectorizer`, `LogisticRegression`, `Pipeline`, `train_test_split`, metrics) |
+| ML / NLP | scikit-learn (`TfidfVectorizer`, `LogisticRegression`, `CalibratedClassifierCV`, `Pipeline`, metrics) |
 | Data | pandas, UCI SMS Spam Collection |
 | Persistence | joblib |
 | Web UI | Streamlit |
@@ -118,6 +120,7 @@ spam-detector-train        # retrain, overwrite models/*, print the report
 | :--- | :--- |
 | `spam-detector-data` | Download the dataset |
 | `spam-detector-train` | Train and evaluate the model |
+| `spam-detector-predict` | Classify one message from the command line |
 | `spam-detector-api` | Serve the REST API (Uvicorn) |
 | `spam-detector-ui` | Launch the Streamlit demo |
 
@@ -146,20 +149,26 @@ spam-detector-api                     # or: uvicorn spam_detector.api:app --relo
 | :--- | :--- | :--- |
 | `GET` | `/health` | Liveness + whether a model artifact is present |
 | `GET` | `/model-info` | Stored evaluation metrics and metadata |
-| `POST` | `/predict` | Classify one message |
+| `POST` | `/predict` | Classify one message (optional `explain`, per-request `threshold`) |
+| `POST` | `/predict/batch` | Classify up to 100 messages, preserving order |
+| `POST` | `/feedback` | Log a suspected misclassification to a JSONL file |
+| `GET` | `/drift` | Input drift snapshot (length z-score, OOV rate) |
 | `GET` | `/docs` | Interactive OpenAPI (Swagger) documentation |
 
 ```bash
 curl -X POST http://127.0.0.1:8000/predict \
   -H "Content-Type: application/json" \
-  -d '{"message": "Congratulations! You have won a free prize, claim now."}'
+  -d '{"message": "Congratulations! You have won a free prize, claim now.", "explain": true}'
 ```
 
 ```json
 {
   "label": "spam",
   "is_spam": true,
-  "spam_probability": 0.9134
+  "spam_probability": 0.953,
+  "explanations": [
+    {"token": "prize", "direction": "spam", "weight": 1.204}
+  ]
 }
 ```
 
@@ -170,6 +179,8 @@ Error contract: `422` for invalid/blank/oversized input, `503` when no model art
 ```bash
 spam-detector-train --help
 spam-detector-train --data samples/sample_messages.tsv --model-dir /tmp/out --test-size 0.3
+# Opt-in: cross-validated hyperparameter search and calibration controls
+spam-detector-train --search
 ```
 
 | Flag | Default | Description |
@@ -178,8 +189,15 @@ spam-detector-train --data samples/sample_messages.tsv --model-dir /tmp/out --te
 | `--model-dir` | `models/` | Where the model and metrics are written |
 | `--test-size` | `0.2` | Held-out fraction |
 | `--seed` | `42` | Split random seed |
+| `--threshold` | `0.5` | Spam probability threshold for reported metrics |
+| `--search` | off | Stratified-CV hyperparameter selection (word/char n-grams, `C`) |
+| `--cv` | `5` | Folds used by `--search` |
+| `--no-calibrate` | — | Save the raw logistic regression instead of the calibrated one |
+| `--no-char-ngrams` | — | Disable character n-grams |
 
-Override artifact locations without touching code: `SPAM_MODEL_PATH`, `SPAM_DATASET_PATH`, `SPAM_DATA_DIR`, `API_HOST`, `API_PORT`.
+Training records length/vocabulary statistics next to the model, which the `/drift` endpoint and UI sidebar compare live traffic against.
+
+Override artifact locations without touching code: `SPAM_MODEL_PATH`, `SPAM_DATASET_PATH`, `SPAM_DATA_DIR`, `SPAM_THRESHOLD`, `SPAM_FEEDBACK_LOG`, `SPAM_DRIFT_WINDOW`, `API_HOST`, `API_PORT`.
 
 ### Docker
 
@@ -203,14 +221,18 @@ docker build -t spam-detector . && docker run -p 8000:8000 spam-detector
 │   ├── data.py                # Dataset download and extraction
 │   ├── app.py                 # Streamlit demo UI
 │   ├── api.py                 # FastAPI service (create_app + endpoints)
+│   ├── predict.py             # Single-message prediction CLI
+│   ├── drift.py               # Rolling-window drift monitor
 │   └── cli.py                 # Console-script launchers
 ├── tests/
 │   ├── conftest.py            # Shared fitted-model fixtures
-│   ├── test_model.py          # Validation, prediction, persistence
+│   ├── test_model.py          # Validation, prediction, explainability
 │   ├── test_train.py          # Data validation + end-to-end training
 │   ├── test_data.py           # Archive extraction (no network)
 │   ├── test_api.py            # HTTP contract and error semantics
 │   ├── test_app.py            # Headless Streamlit renders (AppTest)
+│   ├── test_drift.py          # DriftMonitor statistics and thresholds
+│   ├── test_predict.py        # Prediction CLI
 │   └── test_cli.py            # Launcher arguments
 ├── docs/MODEL_CARD.md         # Intended use, metrics, error analysis
 ├── samples/sample_messages.tsv  # 60-message smoke-test dataset
@@ -228,7 +250,7 @@ docker build -t spam-detector . && docker run -p 8000:8000 spam-detector
 
 **Why a package layout?** The flat script layout grew into five modules that all needed each other's paths and a `sys.path` shim for tests. Moving to `src/spam_detector/` with `pyproject.toml` gives one import root, real entry points, installed-package behaviour identical to the repo, and a `config.py` that owns every path — the API, UI, CLI, and downloader can no longer disagree about where the model lives.
 
-**Why TF-IDF + logistic regression?** On this dataset it reaches ~98% accuracy in seconds on a CPU, the coefficients are inspectable, and the whole artifact is 1.4 MB — a strong baseline that keeps the project dependency-light. A transformer would add hundreds of MB and GPU requirements for a marginal gain on SMS-length text.
+**Why TF-IDF + logistic regression?** On this dataset it reaches ~99% accuracy in seconds on a CPU, the coefficients are inspectable, and the whole calibration-wrapped artifact is under 4 MB — a strong baseline that keeps the project dependency-light. A transformer would add hundreds of MB and GPU requirements for a marginal gain on SMS-length text.
 
 **Data hygiene.** The raw UCI file has 5,574 lines; after dropping duplicates and blank rows, 5,160 unique messages remain. Any message that carries two different labels aborts training instead of silently picking one, and identical messages never appear in both the train and test splits — so the reported score is not inflated by leakage, a classic pitfall in spam-classification write-ups.
 
@@ -238,7 +260,7 @@ docker build -t spam-detector . && docker run -p 8000:8000 spam-detector
 
 **Lazy model loading.** The API starts even when no artifact exists and answers `/health` honestly (`model_loaded: false`), returning `503` on `/predict` instead of crashing on import — which keeps container health checks meaningful.
 
-**Reproducibility.** Every training run records the dataset name, row count, SHA-256, Python version, scikit-learn version, and a UTC timestamp inside `metrics.json`.
+**Reproducibility.** Every training run records the dataset name, row count, SHA-256, Python version, scikit-learn version, and a UTC timestamp inside `metrics.json`, alongside the calibration method, hyperparameter-search history, and the training-time length/vocabulary statistics that power drift monitoring.
 
 **On coverage.** `coverage.py` cannot attribute line data to scripts that Streamlit compiles and `exec`s through its own loader, so the Streamlit entry point is excluded from the coverage total and verified behaviourally by
 
@@ -278,11 +300,11 @@ CI (GitHub Actions) installs the package, smoke-tests the entry points, runs ruf
 
 ## Roadmap
 
-- [ ] Calibrate probabilities (`CalibratedClassifierCV`) and report a Brier score
-- [ ] Add character n-grams / hyperparameter search with cross-validated model selection
-- [ ] Surface the most influential tokens per prediction (coefficient-based explainability)
-- [ ] Batch prediction endpoint and a `/feedback` route to log misclassifications
-- [ ] Drift monitoring on incoming message length and vocabulary
+- [x] Calibrate probabilities (`CalibratedClassifierCV`) and report a Brier score
+- [x] Add character n-grams / hyperparameter search with cross-validated model selection
+- [x] Surface the most influential tokens per prediction (coefficient-based explainability)
+- [x] Batch prediction endpoint and a `/feedback` route to log misclassifications
+- [x] Drift monitoring on incoming message length and vocabulary
 - [ ] Publish to PyPI and deploy the API to a public host with a live demo link
 
 ## License
