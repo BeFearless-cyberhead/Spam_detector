@@ -3,13 +3,16 @@
 Usage::
 
     python -m spam_detector.train          # full dataset -> models/
+    python -m spam_detector.train --search # cross-validated model selection
     python -m spam_detector.train --help   # every option
 
 The script writes two artifacts:
 
 * ``spam_model.joblib`` -- the fitted pipeline used by the UI and the API.
 * ``metrics.json`` -- the held-out evaluation report plus training metadata
-  (dataset fingerprint, library versions, timestamp) for reproducibility.
+  (dataset fingerprint, library versions, timestamp, calibration scores, and
+  the length/vocabulary statistics the drift monitor compares against) for
+  reproducibility.
 """
 
 from __future__ import annotations
@@ -21,23 +24,44 @@ import platform
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 import sklearn
-from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    brier_score_loss,
+    classification_report,
+    confusion_matrix,
+    log_loss,
+    precision_recall_fscore_support,
+)
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 
 from spam_detector.config import (
     METRICS_FILENAME,
     MODEL_FILENAME,
     MODELS_DIR,
     dataset_path,
+    spam_threshold,
 )
+from spam_detector.drift import dataset_statistics
 from spam_detector.model import build_model
 
 #: Minimum number of unique messages required per class.
 MIN_MESSAGES_PER_CLASS = 5
+
+#: Candidate configurations explored by ``--search``. Kept deliberately small:
+#: on the SMS corpus each candidate trains in a couple of seconds.
+SEARCH_GRID: list[dict[str, Any]] = [
+    {"use_char_ngrams": True, "word_ngram_range": (1, 2), "c": 1.0},
+    {"use_char_ngrams": True, "word_ngram_range": (1, 2), "c": 0.5},
+    {"use_char_ngrams": True, "word_ngram_range": (1, 2), "c": 2.0},
+    {"use_char_ngrams": True, "word_ngram_range": (1, 3), "c": 1.0},
+    {"use_char_ngrams": False, "word_ngram_range": (1, 2), "c": 1.0},
+    {"use_char_ngrams": False, "word_ngram_range": (1, 3), "c": 1.0},
+]
 
 
 def load_dataset(path: Path) -> pd.DataFrame:
@@ -128,6 +152,120 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+def select_hyperparameters(
+    x_train: pd.Series,
+    y_train: pd.Series,
+    *,
+    seed: int = 42,
+    cv: int = 5,
+    grid: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Pick pipeline hyperparameters with stratified cross-validation.
+
+    Each candidate is scored by mean spam F1 over the folds -- the metric this
+    project optimises for, since missing spam is costlier than a false alarm.
+
+    Args:
+        x_train: Training messages.
+        y_train: Training targets.
+        seed: Seed for the shuffled stratified folds.
+        cv: Requested number of folds (reduced automatically for small data).
+        grid: Candidate configurations; defaults to :data:`SEARCH_GRID`.
+
+    Returns:
+        A JSON-serialisable report with the winning ``params``, its mean/std
+        score, and every candidate's result.
+    """
+    candidates = grid if grid is not None else SEARCH_GRID
+    smallest_class = int(pd.Series(list(y_train)).value_counts().min())
+    folds = max(2, min(cv, smallest_class))
+
+    splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
+    results = []
+
+    for params in candidates:
+        scores = cross_val_score(
+            build_model(calibrated=False, random_state=seed, **params),
+            x_train,
+            y_train,
+            cv=splitter,
+            scoring="f1",
+        )
+        results.append(
+            {
+                "params": _serialise_params(params),
+                "mean_f1": round(float(np.mean(scores)), 6),
+                "std_f1": round(float(np.std(scores)), 6),
+                "folds": [round(float(score), 6) for score in scores],
+            }
+        )
+
+    best = max(results, key=lambda result: result["mean_f1"])
+    best_params = next(
+        candidate
+        for candidate, result in zip(candidates, results, strict=True)
+        if result is best
+    )
+
+    return {
+        "selection_metric": "spam_f1",
+        "cv_folds": folds,
+        "params": _serialise_params(best_params),
+        "mean_f1": best["mean_f1"],
+        "std_f1": best["std_f1"],
+        "candidates": results,
+    }
+
+
+def _serialise_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Convert pipeline parameters into JSON-friendly values."""
+    return {
+        key: list(value) if isinstance(value, tuple) else value
+        for key, value in params.items()
+    }
+
+
+def evaluate_probabilities(
+    y_test: pd.Series,
+    probabilities: np.ndarray,
+    *,
+    threshold: float,
+) -> dict[str, Any]:
+    """Summarise probabilistic and thresholded quality.
+
+    Args:
+        y_test: True labels for the held-out split.
+        probabilities: Spam probability for every test message.
+        threshold: Probability at or above which a message is called spam.
+
+    Returns:
+        A JSON-serialisable mapping with the Brier score, log loss, and
+        precision/recall/F1 at ``threshold``.
+    """
+    predictions = (probabilities >= threshold).astype(int)
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        y_test,
+        predictions,
+        labels=[1],
+        average=None,
+        zero_division=0,
+    )
+
+    return {
+        "threshold": threshold,
+        "threshold_metrics": {
+            "precision": round(float(precision[0]), 6),
+            "recall": round(float(recall[0]), 6),
+            "f1": round(float(f1[0]), 6),
+        },
+        "brier_score": round(
+            float(brier_score_loss(y_test, probabilities, pos_label=1)),
+            6,
+        ),
+        "log_loss": round(float(log_loss(y_test, probabilities, labels=[0, 1])), 6),
+    }
+
+
 def build_metrics_report(
     y_test: pd.Series,
     predictions,
@@ -135,6 +273,11 @@ def build_metrics_report(
     data_path: Path,
     row_count: int,
     train_messages: int,
+    probabilities: np.ndarray | None = None,
+    threshold: float | None = None,
+    calibrated: bool = False,
+    search: dict[str, Any] | None = None,
+    training_statistics: dict[str, Any] | None = None,
 ) -> dict:
     """Assemble the evaluation report saved next to the model.
 
@@ -144,6 +287,11 @@ def build_metrics_report(
         data_path: Dataset that produced the model.
         row_count: Number of usable rows in the dataset.
         train_messages: Number of rows used for fitting.
+        probabilities: Optional spam probabilities for the held-out split.
+        threshold: Decision threshold used for ``predictions``.
+        calibrated: Whether the saved pipeline is probability-calibrated.
+        search: Optional hyperparameter-search report.
+        training_statistics: Optional length/vocabulary stats for drift checks.
 
     Returns:
         A JSON-serialisable mapping of metrics and training metadata.
@@ -159,7 +307,7 @@ def build_metrics_report(
 
     matrix = confusion_matrix(y_test, predictions, labels=[0, 1])
 
-    return {
+    metrics: dict[str, Any] = {
         "training_messages": train_messages,
         "test_messages": len(y_test),
         "classification_report": report,
@@ -173,8 +321,25 @@ def build_metrics_report(
             "trained_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "python_version": platform.python_version(),
             "scikit_learn_version": sklearn.__version__,
+            "calibrated": calibrated,
+            "calibration_method": "sigmoid" if calibrated else None,
         },
     }
+
+    if probabilities is not None and threshold is not None:
+        metrics["probability"] = evaluate_probabilities(
+            y_test,
+            probabilities,
+            threshold=threshold,
+        )
+
+    if search is not None:
+        metrics["training"]["hyperparameter_search"] = search
+
+    if training_statistics is not None:
+        metrics["training_statistics"] = training_statistics
+
+    return metrics
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -213,6 +378,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=42,
         help="Random seed for the train/test split (default: 42).",
     )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=spam_threshold(),
+        help="Spam probability threshold for the reported metrics (default: 0.5).",
+    )
+    parser.add_argument(
+        "--search",
+        action="store_true",
+        help="Select hyperparameters with stratified cross-validation.",
+    )
+    parser.add_argument(
+        "--cv",
+        type=int,
+        default=5,
+        help="Cross-validation folds used by --search (default: 5).",
+    )
+    parser.add_argument(
+        "--no-calibrate",
+        action="store_true",
+        help="Save the uncalibrated logistic regression instead of the "
+        "calibrated classifier.",
+    )
+    parser.add_argument(
+        "--no-char-ngrams",
+        action="store_true",
+        help="Disable character n-grams (overrides the search-selected value).",
+    )
     return parser.parse_args(argv)
 
 
@@ -223,6 +416,10 @@ def main(argv: list[str] | None = None) -> None:
         argv: Optional argument list, forwarded to :func:`parse_args`.
     """
     args = parse_args(argv)
+
+    if not 0.0 <= args.threshold <= 1.0:
+        raise ValueError("--threshold must be between 0.0 and 1.0.")
+
     frame = load_dataset(args.data)
 
     x_train, x_test, y_train, y_test = train_test_split(
@@ -233,9 +430,35 @@ def main(argv: list[str] | None = None) -> None:
         stratify=frame["target"],
     )
 
-    model = build_model()
+    search = None
+    model_params: dict[str, Any] = {}
+
+    if args.search:
+        search = select_hyperparameters(
+            x_train,
+            y_train,
+            seed=args.seed,
+            cv=args.cv,
+        )
+        model_params = {
+            "use_char_ngrams": search["params"]["use_char_ngrams"],
+            "word_ngram_range": tuple(search["params"]["word_ngram_range"]),
+            "c": search["params"]["c"],
+        }
+
+    if args.no_char_ngrams:
+        model_params["use_char_ngrams"] = False
+
+    model = build_model(
+        calibrated=not args.no_calibrate,
+        calibration_cv=max(2, min(5, int(y_train.value_counts().min()))),
+        random_state=args.seed,
+        **model_params,
+    )
     model.fit(x_train, y_train)
-    predictions = model.predict(x_test)
+
+    probabilities = model.predict_proba(x_test)[:, 1]
+    predictions = (probabilities >= args.threshold).astype(int)
 
     metrics = build_metrics_report(
         y_test,
@@ -243,6 +466,11 @@ def main(argv: list[str] | None = None) -> None:
         data_path=args.data,
         row_count=len(frame),
         train_messages=len(x_train),
+        probabilities=probabilities,
+        threshold=args.threshold,
+        calibrated=not args.no_calibrate,
+        search=search,
+        training_statistics=dataset_statistics(frame["message"]),
     )
 
     model_path = args.model_dir / MODEL_FILENAME
@@ -254,6 +482,16 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"Training messages: {len(x_train)}")
     print(f"Test messages: {len(x_test)}")
+    print(f"Decision threshold: {args.threshold:.2f}")
+    print(f"Calibrated probabilities: {not args.no_calibrate}")
+
+    if search:
+        chosen = search["params"]
+        print(
+            f"Selected parameters by {search['cv_folds']}-fold CV "
+            f"(mean spam F1 {search['mean_f1']:.4f}): {chosen}"
+        )
+
     print("\nClassification report:")
     print(
         classification_report(
@@ -267,6 +505,12 @@ def main(argv: list[str] | None = None) -> None:
     print("Confusion matrix: rows=actual, columns=predicted")
     print("Label order: ham, spam")
     print(metrics["confusion_matrix"])
+
+    if "probability" in metrics:
+        probability = metrics["probability"]
+        print(f"\nBrier score: {probability['brier_score']:.4f}")
+        print(f"Log loss: {probability['log_loss']:.4f}")
+
     print(f"\nModel saved to: {model_path}")
     print(f"Metrics saved to: {metrics_path}")
 

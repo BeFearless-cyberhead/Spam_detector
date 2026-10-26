@@ -60,3 +60,22 @@ def test_app_warns_on_empty_message(app):
 
     assert not app.exception
     assert "non-empty" in " ".join(block.value for block in app.warning)
+
+
+def test_app_exposes_a_threshold_control(app):
+    assert not app.exception
+    assert app.slider[0].label == "Spam threshold"
+    assert app.slider[0].value == 0.5
+
+
+def test_app_shows_token_explanations(app):
+    app.text_area[0].set_value(SPAM_MESSAGE)
+    app.button[0].click().run()
+
+    assert not app.exception
+    assert any("token" in frame.value.columns for frame in app.dataframe)
+
+
+def test_app_reports_input_drift(app):
+    assert not app.exception
+    assert any("Input drift" in expander.label for expander in app.sidebar.expander)

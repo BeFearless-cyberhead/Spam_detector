@@ -13,9 +13,12 @@ from pathlib import Path
 
 import streamlit as st
 
-from spam_detector.config import metrics_path, model_path
+from spam_detector.config import drift_window, metrics_path, model_path, spam_threshold
+from spam_detector.drift import DriftMonitor, ReferenceStatistics
 from spam_detector.model import (
+    DEFAULT_TOP_TOKENS,
     MAX_MESSAGE_LENGTH,
+    explain_prediction,
     load_model,
     predict_spam,
     predict_spam_probability,
@@ -54,6 +57,29 @@ def load_metrics(path: str, modified_at: int) -> dict | None:
         return None
 
 
+@st.cache_resource
+def build_monitor(metrics_modified_at: int, window: int) -> DriftMonitor:
+    """Create the process-wide drift monitor for recent messages.
+
+    Args:
+        metrics_modified_at: Cache key tied to the metrics file mtime.
+        window: Number of messages to keep.
+
+    Returns:
+        A monitor seeded with the training statistics when available.
+    """
+    metrics_file = metrics_path()
+    metrics = (
+        load_metrics(str(metrics_file), metrics_file.stat().st_mtime_ns)
+        if metrics_file.exists()
+        else None
+    )
+    return DriftMonitor(
+        ReferenceStatistics.from_metrics(metrics),
+        window_size=window,
+    )
+
+
 def render_model_card(metrics: dict) -> None:
     """Render the model's held-out metrics in the sidebar.
 
@@ -75,6 +101,14 @@ def render_model_card(metrics: dict) -> None:
         f"Ham F1 {ham.get('f1-score', 0):.2f} · Spam F1 {spam.get('f1-score', 0):.2f}"
     )
 
+    probability = metrics.get("probability", {})
+
+    if probability:
+        st.sidebar.caption(
+            f"Brier score {probability.get('brier_score', 0):.3f} · "
+            f"log loss {probability.get('log_loss', 0):.3f}"
+        )
+
     training = metrics.get("training", {})
 
     if training:
@@ -86,6 +120,10 @@ def render_model_card(metrics: dict) -> None:
             f"scikit-learn {training.get('scikit_learn_version', 'n/a')} · "
             f"{training.get('trained_at_utc', 'n/a')}"
         )
+
+        if training.get("calibrated"):
+            method = training.get("calibration_method", "sigmoid")
+            st.sidebar.caption(f"Probabilities calibrated ({method})")
 
     with st.sidebar.expander("Confusion matrix (rows = actual)"):
         matrix = metrics.get("confusion_matrix")
@@ -106,6 +144,48 @@ def render_model_card(metrics: dict) -> None:
                 ],
                 hide_index=True,
             )
+
+
+def render_drift(monitor: DriftMonitor) -> None:
+    """Render the session's drift snapshot in the sidebar.
+
+    Args:
+        monitor: The drift monitor fed by this app's predictions.
+    """
+    snapshot = monitor.snapshot()
+
+    with st.sidebar.expander("Input drift"):
+        st.caption(
+            f"Status: **{snapshot['status'].replace('_', ' ')}** · "
+            f"{snapshot['window_messages']} of {snapshot['window_size']} messages"
+        )
+
+        statistics = snapshot.get("reference")
+
+        if statistics:
+            caption = (
+                f"Mean length {snapshot['mean_length']:.0f} chars "
+                f"(training {statistics['mean_length']:.0f})"
+            )
+
+            if snapshot["oov_rate"] is not None:
+                caption += f" · OOV {snapshot['oov_rate']:.1%}"
+
+            st.caption(caption)
+
+
+def clamp_threshold(value: float, low: float = 0.05, high: float = 0.95) -> float:
+    """Keep an externally configured threshold inside the slider's range.
+
+    Args:
+        value: Configured threshold.
+        low: Slider minimum.
+        high: Slider maximum.
+
+    Returns:
+        ``value`` clamped to ``[low, high]``.
+    """
+    return min(max(value, low), high)
 
 
 def main() -> None:
@@ -130,6 +210,18 @@ def main() -> None:
 
     if metrics:
         render_model_card(metrics)
+
+    threshold = st.sidebar.slider(
+        "Spam threshold",
+        min_value=0.05,
+        max_value=0.95,
+        value=clamp_threshold(spam_threshold()),
+        step=0.05,
+        help=(
+            "Probability at or above which a message is flagged as spam. "
+            "Lower catches more spam; higher reduces false alarms."
+        ),
+    )
 
     if not artifact.exists():
         st.warning("Train the model before using the application.")
@@ -159,24 +251,64 @@ def main() -> None:
 
     if submitted:
         try:
-            is_spam = predict_spam(model, message)
+            is_spam = predict_spam(model, message, threshold=threshold)
             probability = predict_spam_probability(model, message)
+            explanations = explain_prediction(
+                model,
+                message,
+                top_k=DEFAULT_TOP_TOKENS,
+            )
         except (TypeError, ValueError) as exc:
             st.warning(str(exc))
         except Exception:  # noqa: BLE001 - surface any prediction error as a friendly UI message
             st.error("Prediction failed. Check the model and retrain if necessary.")
         else:
             if is_spam:
-                st.error(f"### Yes — spam\nConfidence: {probability:.1%}")
+                st.error(
+                    f"### Yes — spam\nConfidence: {probability:.1%} "
+                    f"(threshold {threshold:.0%})"
+                )
             else:
                 st.success(
-                    f"### No — looks legitimate\nSpam probability: {probability:.1%}"
+                    f"### No — looks legitimate\nSpam probability: {probability:.1%} "
+                    f"(threshold {threshold:.0%})"
                 )
 
             st.progress(
                 min(max(probability, 0.0), 1.0),
                 text=f"Spam probability: {probability:.1%}",
             )
+
+            with st.expander("Why this verdict?"):
+                st.dataframe(
+                    [
+                        {
+                            "token": item["token"],
+                            "direction": item["direction"],
+                            "weight": item["weight"],
+                            "source": item["source"],
+                        }
+                        for item in explanations
+                    ],
+                    hide_index=True,
+                )
+                st.caption(
+                    "Weight = TF-IDF value x logistic-regression coefficient. "
+                    "Positive tokens push towards spam, negative towards ham."
+                )
+
+            metrics_file = metrics_path()
+            build_monitor(
+                metrics_file.stat().st_mtime_ns if metrics_file.exists() else 0,
+                drift_window(),
+            ).observe(message.strip())
+
+    render_drift(
+        build_monitor(
+            metrics_file.stat().st_mtime_ns if metrics_file.exists() else 0,
+            drift_window(),
+        )
+    )
 
     st.divider()
     st.caption(

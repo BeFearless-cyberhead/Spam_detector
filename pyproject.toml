@@ -63,6 +63,7 @@ all = [
 [project.scripts]
 spam-detector-api = "spam_detector.api:serve"
 spam-detector-data = "spam_detector.data:main"
+spam-detector-predict = "spam_detector.predict:main"
 spam-detector-train = "spam_detector.train:main"
 spam-detector-ui = "spam_detector.cli:ui"
 

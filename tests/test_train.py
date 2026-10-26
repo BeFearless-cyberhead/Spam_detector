@@ -6,7 +6,14 @@ import pytest
 from sklearn.pipeline import Pipeline
 
 from spam_detector.model import build_model, predict_spam
-from spam_detector.train import load_dataset, main, parse_args, sha256_of
+from spam_detector.train import (
+    SEARCH_GRID,
+    load_dataset,
+    main,
+    parse_args,
+    select_hyperparameters,
+    sha256_of,
+)
 
 SAMPLE_PATH = Path(__file__).resolve().parent.parent / "samples" / "sample_messages.tsv"
 
@@ -175,6 +182,144 @@ def test_training_writes_model_and_metrics(tmp_path):
     assert len(metrics["training"]["dataset_sha256"]) == 64
 
 
+def test_training_reports_calibration_and_drift_statistics(tmp_path):
+    main(
+        [
+            "--data",
+            str(SAMPLE_PATH),
+            "--model-dir",
+            str(tmp_path),
+            "--test-size",
+            "0.3",
+        ]
+    )
+
+    metrics = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+
+    assert metrics["training"]["calibrated"] is True
+    assert metrics["training"]["calibration_method"] == "sigmoid"
+
+    probability = metrics["probability"]
+    assert probability["threshold"] == 0.5
+    assert 0.0 <= probability["brier_score"] <= 1.0
+    assert probability["log_loss"] >= 0.0
+    assert set(probability["threshold_metrics"]) == {"precision", "recall", "f1"}
+
+    statistics = metrics["training_statistics"]
+    assert statistics["messages"] == len(load_dataset(SAMPLE_PATH))
+    assert statistics["vocabulary_size"] > 0
+    assert statistics["vocabulary"]
+    assert statistics["length"]["mean"] > 0
+
+
+def test_training_can_skip_calibration(tmp_path):
+    main(
+        [
+            "--data",
+            str(SAMPLE_PATH),
+            "--model-dir",
+            str(tmp_path),
+            "--test-size",
+            "0.3",
+            "--no-calibrate",
+        ]
+    )
+
+    metrics = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+
+    assert metrics["training"]["calibrated"] is False
+    assert metrics["training"]["calibration_method"] is None
+
+
+def test_training_uses_the_requested_threshold(tmp_path):
+    main(
+        [
+            "--data",
+            str(SAMPLE_PATH),
+            "--model-dir",
+            str(tmp_path),
+            "--test-size",
+            "0.3",
+            "--threshold",
+            "0.3",
+        ]
+    )
+
+    metrics = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+
+    assert metrics["probability"]["threshold"] == 0.3
+
+
+def test_training_rejects_an_invalid_threshold(tmp_path):
+    with pytest.raises(ValueError, match="threshold"):
+        main(
+            [
+                "--data",
+                str(SAMPLE_PATH),
+                "--model-dir",
+                str(tmp_path),
+                "--threshold",
+                "1.5",
+            ]
+        )
+
+
+def test_training_records_a_hyperparameter_search(tmp_path):
+    main(
+        [
+            "--data",
+            str(SAMPLE_PATH),
+            "--model-dir",
+            str(tmp_path),
+            "--test-size",
+            "0.3",
+            "--search",
+            "--cv",
+            "2",
+        ]
+    )
+
+    metrics = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+    search = metrics["training"]["hyperparameter_search"]
+
+    assert search["selection_metric"] == "spam_f1"
+    assert search["cv_folds"] == 2
+    assert len(search["candidates"]) == len(SEARCH_GRID)
+    assert search["params"]["use_char_ngrams"] in {True, False}
+
+
+def test_select_hyperparameters_picks_the_best_candidate():
+    frame = load_dataset(SAMPLE_PATH)
+
+    report = select_hyperparameters(
+        frame["message"],
+        frame["target"],
+        seed=1,
+        grid=[
+            {"use_char_ngrams": True, "word_ngram_range": (1, 2), "c": 1.0},
+            {"use_char_ngrams": False, "word_ngram_range": (1, 2), "c": 1.0},
+        ],
+    )
+
+    assert report["cv_folds"] == 5
+    assert len(report["candidates"]) == 2
+    assert report["mean_f1"] == max(
+        candidate["mean_f1"] for candidate in report["candidates"]
+    )
+    assert set(report["params"]) == {"use_char_ngrams", "word_ngram_range", "c"}
+    assert isinstance(report["params"]["word_ngram_range"], list)
+
+
+def test_search_reduces_folds_for_tiny_datasets():
+    report = select_hyperparameters(
+        ["aa bb", "cc dd", "ee ff", "gg hh", "ii jj", "kk ll", "mm nn", "oo pp"],
+        [0, 0, 0, 0, 1, 1, 1, 1],
+        grid=[{"use_char_ngrams": False, "word_ngram_range": (1, 2), "c": 1.0}],
+    )
+
+    assert report["cv_folds"] == 4
+
+
 def test_saved_model_matches_live_pipeline(tmp_path):
     main(
         [
@@ -202,10 +347,24 @@ def test_saved_model_matches_live_pipeline(tmp_path):
         (["--test-size", "0.25"], "test_size", 0.25),
         (["--seed", "1"], "seed", 1),
         (["--model-dir", "out"], "model_dir", Path("out")),
+        ([], "search", False),
+        (["--search"], "search", True),
+        ([], "no_calibrate", False),
+        (["--no-calibrate"], "no_calibrate", True),
+        ([], "cv", 5),
+        (["--cv", "3"], "cv", 3),
+        ([], "no_char_ngrams", False),
+        (["--no-char-ngrams"], "no_char_ngrams", True),
     ],
 )
 def test_parse_args(args, attribute, expected):
     assert getattr(parse_args(args), attribute) == expected
+
+
+def test_parse_args_reads_the_default_threshold_from_the_environment(monkeypatch):
+    monkeypatch.setenv("SPAM_THRESHOLD", "0.35")
+
+    assert parse_args([]).threshold == 0.35
 
 
 def test_default_dataset_path_lives_in_data_dir():

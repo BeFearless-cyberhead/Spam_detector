@@ -25,8 +25,21 @@ TRAINING_LABELS = [0, 0, 0, 0, 1, 1, 1, 1]
 
 @pytest.fixture
 def fitted_model():
-    """A pipeline fitted on the tiny in-memory corpus."""
-    model = build_model()
+    """A pipeline fitted on the tiny in-memory corpus.
+
+    Uncalibrated on purpose: the corpus has only four messages per class, which
+    is too small for cross-validated calibration. The dedicated
+    ``calibrated_model`` fixture covers that path.
+    """
+    model = build_model(calibrated=False)
+    model.fit(TRAINING_MESSAGES, TRAINING_LABELS)
+    return model
+
+
+@pytest.fixture
+def calibrated_model():
+    """A probability-calibrated pipeline fitted on the tiny corpus."""
+    model = build_model(calibration_cv=2)
     model.fit(TRAINING_MESSAGES, TRAINING_LABELS)
     return model
 
