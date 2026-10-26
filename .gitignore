@@ -40,6 +40,8 @@ models/*
 # --- Local planning --------------------------------------------------------
 # Personal progress notes; not part of the published repo.
 todo.md
+flow.md
+decision.md
 
 # --- Editors and OS -------------------------------------------------------
 .idea/
