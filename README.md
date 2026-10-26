@@ -207,6 +207,19 @@ docker compose up --build     # API on :8000, UI on :8501
 docker build -t spam-detector . && docker run -p 8000:8000 spam-detector
 ```
 
+### Live deployment (Render)
+
+A [Blueprint](render.yaml) deploys both services from this repository — no code changes needed:
+
+1. Push this repo to GitHub (done).
+2. Go to [Render Dashboard](https://dashboard.render.com) → **New → Blueprint** → select the repo.
+3. Render reads `render.yaml` and creates both services:
+   - `spam-detector-api` — FastAPI at `https://spam-detector-api.onrender.com` (health-checked on `/health`)
+   - `spam-detector-ui` — Streamlit at `https://spam-detector-ui.onrender.com`
+4. URLs are `<service-name>.onrender.com` or come out of the blueprint creation screen.
+
+Free-plan notes: both services are on the free plan, so they sleep after ~15 minutes of inactivity; the first request afterwards takes ~30–60 s to wake. The committed model artifact means no training happens at deploy time. Every push to `main` triggers a redeploy of both services.
+
 ---
 
 ## Project structure
@@ -305,7 +318,8 @@ CI (GitHub Actions) installs the package, smoke-tests the entry points, runs ruf
 - [x] Surface the most influential tokens per prediction (coefficient-based explainability)
 - [x] Batch prediction endpoint and a `/feedback` route to log misclassifications
 - [x] Drift monitoring on incoming message length and vocabulary
-- [ ] Publish to PyPI and deploy the API to a public host with a live demo link
+- [x] Deploy the API with a live demo link — [Render Blueprint](render.yaml) hosts the API and UI
+- [ ] Publish to PyPI
 
 ## License
 

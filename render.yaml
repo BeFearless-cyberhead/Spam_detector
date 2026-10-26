@@ -1,0 +1,32 @@
+# Render Blueprint — deploys both services from this repository.
+#
+# One-time setup (Blueprint): Render Dashboard → New → Blueprint →
+# pick this repo; Render reads this file and creates both services.
+#
+# Free plan notes: each service sleeps after ~15 minutes idle and the
+# first request afterwards takes ~30–60 s to wake. Model artifacts are
+# committed, so no build-time training is needed.
+
+services:
+  # FastAPI service — https://spam-detector-api.onrender.com
+  - type: web
+    name: spam-detector-api
+    runtime: python
+    plan: free
+    region: frankfurt            # EU region; change to oregon/singapore if preferred
+    pythonVersion: "3.12"
+    buildCommand: pip install --upgrade pip && pip install --editable ".[api]"
+    startCommand: uvicorn spam_detector.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+
+  # Streamlit UI — https://spam-detector-ui.onrender.com
+  - type: web
+    name: spam-detector-ui
+    runtime: python
+    plan: free
+    region: frankfurt
+    pythonVersion: "3.12"
+    buildCommand: pip install --upgrade pip && pip install --editable ".[ui]"
+    startCommand: >-
+      streamlit run src/spam_detector/app.py
+      --server.port $PORT --server.address 0.0.0.0 --server.headless true
